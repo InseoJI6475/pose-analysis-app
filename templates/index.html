@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>자세 분석 시스템 v3.5</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; max-width: 900px; margin: 2em auto; line-height: 1.6; color: #333; background-color: #f9f9f9; }
+        .header { text-align: center; margin-bottom: 2em; }
+        h1 { color: #1a73e8; }
+        .container { display: grid; grid-template-columns: 1fr; gap: 2em; }
+        .upload-form, .result-display { padding: 2em; border: 1px solid #ddd; border-radius: 12px; background-color: #fff; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h2 { border-bottom: 2px solid #1a73e8; padding-bottom: 0.5em; margin-top: 0; }
+        h3 { color: #1a73e8; }
+        input[type="submit"], #downloadPdfBtn { display: block; width: 100%; padding: 1em; border: none; border-radius: 8px; cursor: pointer; font-size: 1.1em; transition: background-color 0.3s; }
+        input[type="submit"] { background-color: #1a73e8; color: white; }
+        #downloadPdfBtn { background-color: #1e8e3e; color: white; margin-top: 1.5em; display: none; } /* 처음에는 숨김 */
+        input[type="submit"]:hover { background-color: #0056b3; }
+        #downloadPdfBtn:hover { background-color: #18632e; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #1a73e8; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .report-section { margin-top: 2em; padding: 1.5em; background-color: #fdfdfd; border: 1px solid #e0e0e0; border-radius: 8px; }
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5em; }
+        b { color: #d93025; }
+        .exercise { margin-bottom: 1em; }
+        .exercise-name { font-weight: bold; }
+        img.result-image { max-width: 100%; border-radius: 8px; margin-top: 1em; border: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>자세 분석 시스템 v3.5</h1>
+        <p>사진 또는 5~10초 길이의 보행 동영상을 업로드하세요.</p>
+    </div>
+
+    <div class="container">
+        <div class="upload-form">
+            <h2>파일 업로드</h2>
+            <form id="uploadForm">
+                <input type="file" id="fileInput" name="file" accept="image/*,video/mp4,video/mov" required style="width: 100%; margin-bottom: 1em; padding: 0.5em;">
+                <input type="submit" value="분석 시작">
+            </form>
+        </div>
+        <div class="result-display" id="resultDisplay">
+            <h2>의학 리포트</h2>
+            <div id="resultContent"><p>파일을 업로드하면 여기에 분석 리포트가 표시됩니다.</p></div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const resultContent = document.getElementById('resultContent');
+            resultContent.innerHTML = '<div class="loader"></div><p style="text-align:center;">분석 중입니다...</p>';
+            const formData = new FormData(this);
+
+            try {
+                const response = await fetch('/analyze', { method: 'POST', body: formData });
+                const data = await response.json();
+
+                if (data.error) {
+                    resultContent.innerHTML = `<p style="color: red; font-weight: bold;">오류: ${data.error}</p>`;
+                } else {
+                    let html = ``;
+
+                    // --- 1. 종합 평가 (원래 버전) ---
+                    html += `<div class="report-section">`;
+                    html += `<h3>1. 종합 평가</h3>`;
+                    if (data.analysis_type === 'video') {
+                        html += `<p>보행 주기 동안의 <b>평균 위험도 점수는 ${data.basic_result.load_score.avg.toFixed(0)}점</b> 입니다.</p>`;
+                        html += `<p>가장 자세가 불안정했던 순간의 최대 위험도는 <b>${data.basic_result.load_score.max.toFixed(0)}점</b>으로 측정되었습니다.</p>`;
+                        html += `<p>분당 걸음 수(Cadence): <b>${data.basic_result.cadence.toFixed(0)} steps/min</b></p>`;
+                    } else {
+                        html += `<p>측정된 자세의 <b>종합 위험도 점수는 ${data.basic_result.load_score.toFixed(0)}점</b> 입니다.</p>`;
+                    }
+                    html += `</div>`;
+
+                    // --- 2. 부위별 상세 분석 (원래 버전) ---
+                    html += `<div class="report-section">`;
+                    html += `<h3>2. 부위별 상세 분석</h3>`;
+                    html += `<div class="grid-container">`;
+                    for (const part of ["back", "knee", "neck"]) {
+                        const angle_data = data.basic_result[part + '_angle'];
+                        html += `<div><h4>${part.toUpperCase()}</h4>`;
+                        if (data.analysis_type === 'video') {
+                            html += `<p>평균 각도: <b>${angle_data.avg.toFixed(1)}°</b></p><p>움직임 범위: ${angle_data.min.toFixed(1)}° ~ ${angle_data.max.toFixed(1)}°</p><p>안정성(변동성): <b>${angle_data.std.toFixed(1)}</b></p>`;
+                        } else {
+                            html += `<p>측정 각도: <b>${angle_data.toFixed(1)}°</b></p>`;
+                        }
+                        html += `</div>`;
+                    }
+                    html += `</div></div>`;
+
+                    // --- 3. 전문가 진단 및 솔루션 (원래 버전) ---
+                    if (data.expert_diagnoses && data.expert_diagnoses.length > 0) {
+                        html += `<div class="report-section"><h3>3. 전문가 진단 및 위험 분석</h3>`;
+                        data.expert_diagnoses.forEach(diag => { html += `<p><b>[${diag.part}] ${diag.pattern}:</b> ${diag.risk}</p>`; });
+                        html += `</div>`;
+                    }
+                    if (data.exercise_prescriptions && data.exercise_prescriptions.length > 0) {
+                        html += `<div class="report-section"><h3>4. 개인 맞춤형 교정 운동 솔루션</h3>`;
+                        data.exercise_prescriptions.forEach(pres => {
+                            html += `<h4>${pres.part}</h4>`;
+                            pres.exercises.forEach(ex => { html += `<div class="exercise"><p class="exercise-name">▶ ${ex.name} (${ex.type})</p><p style="margin-left: 20px;"> L ${ex.desc}</p></div>`; });
+                        });
+                        html += `</div>`;
+                    }
+
+                    // --- 4. 대표 이미지 (원래 버전) ---
+                    html += `<div class="report-section"><h3>5. 대표 프레임 분석 이미지</h3><img class="result-image" src="${data.image_url}?t=${new Date().getTime()}" alt="분석 결과"></div>`;
+                    
+                    // ★★★ PDF 다운로드 버튼만 추가 ★★★
+                    html += `<button id="downloadPdfBtn">리포트 PDF로 다운로드</button>`;
+                    
+                    resultContent.innerHTML = html;
+
+                    // --- PDF 다운로드 버튼에 기능 연결 ---
+                    const downloadBtn = document.getElementById('downloadPdfBtn');
+                    downloadBtn.style.display = 'block'; // 버튼 보이기
+                    downloadBtn.addEventListener('click', () => {
+                        window.jsPDF = window.jspdf.jsPDF;
+                        const reportElement = document.getElementById('resultContent');
+                        
+                        downloadBtn.style.display = 'none'; // PDF 저장 시 버튼 숨기기
+                        html2canvas(reportElement, { scale: 2 }).then(canvas => {
+                            const imgData = canvas.toDataURL('image/png');
+                            const pdf = new jsPDF('p', 'mm', 'a4');
+                            const pdfWidth = pdf.internal.pageSize.getWidth();
+                            const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                            pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                            pdf.save("자세분석_리포트.pdf");
+                            downloadBtn.style.display = 'block'; // 저장 후 버튼 다시 보이기
+                        });
+                    });
+                }
+            } catch (err) {
+                resultContent.innerHTML = `<p style="color: red; font-weight: bold;">서버 통신 오류: ${err.message}</p>`;
+            }
+        });
+    </script>
+</body>
+</html>
