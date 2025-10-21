@@ -1,0 +1,9 @@
+flask
+opencv-python-headless
+mediapipe
+numpy
+scipy
+gunicorn
+whitenoise
+cloudinary
+requests
